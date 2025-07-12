@@ -1,4 +1,4 @@
-#include <iostream>
+ï»¿#include <iostream>
 #include <vector>
 #include <cstdint>
 #include <cstring>
@@ -8,7 +8,6 @@
 
 using namespace std;
 
-// ÂÖº¯ÊıÖĞÊ¹ÓÃµÄSºĞ
 static const uint8_t SM4_SBOX[256] = {
     0xd6,0x90,0xe9,0xfe,0xcc,0xe1,0x3d,0xb7,0x16,0xb6,0x14,0xc2,0x28,0xfb,0x2c,0x05,
     0x2b,0x67,0x9a,0x76,0x2a,0xbe,0x04,0xc3,0xaa,0x44,0x13,0x26,0x49,0x86,0x06,0x99,
@@ -28,11 +27,40 @@ static const uint8_t SM4_SBOX[256] = {
     0x18,0xf0,0x7d,0xec,0x3a,0xdc,0x4d,0x20,0x79,0xee,0x5f,0x3e,0xd7,0xcb,0x39,0x48
 };
 
-uint32_t L(uint32_t B) {
-    return B ^ (B << 2 | B >> 30) ^ (B << 10 | B >> 22) ^ (B << 18 | B >> 14) ^ (B << 24 | B >> 8);
+// ç³»ç»Ÿå‚æ•° FK å’Œ CKï¼ˆå¸¸é‡è½®å¯†é’¥ï¼‰
+const uint32_t FK[4] = { 0xa3b1bac6, 0x56aa3350, 0x677d9197, 0xb27022dc };
+
+const uint32_t CK[32] = {
+    0x00070e15,0x1c232a31,0x383f464d,0x545b6269,0x70777e85,0x8c939aa1,0xa8afb6bd,0xc4cbd2d9,
+    0xe0e7eef5,0xfc030a11,0x181f262d,0x343b4249,0x50575e65,0x6c737a81,0x888f969d,0xa4abb2b9,
+    0xc0c7ced5,0xdce3eaf1,0xf8ff060d,0x141b2229,0x30373e45,0x4c535a61,0x686f767d,0x848b9299,
+    0xa0a7aeb5,0xbcc3cad1,0xd8dfe6ed,0xf4fb0209,0x10171e25,0x2c333a41,0x484f565d,0x646b7279
+};
+
+//å¾ªç¯ç§»ä½å‡½æ•°
+uint32_t rotl(uint32_t x, int n) {
+    return (x << n) | (x >> (32 - n));
 }
 
+//åˆæˆå˜æ¢T
 uint32_t T(uint32_t A) {
+    //æ‹†åˆ†1å­—ä¸º4å­—èŠ‚
+    uint8_t a[4] = {
+        static_cast<uint8_t>(A >> 24),
+        static_cast<uint8_t>(A >> 16),
+        static_cast<uint8_t>(A >> 8),
+        static_cast<uint8_t>(A)
+    };
+    //è¿‡Sç›’
+    for (int i = 0; i < 4; ++i)
+        a[i] = SM4_SBOX[a[i]];
+    uint32_t B = (a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3];
+    //çº¿æ€§å˜æ¢
+    return B ^ rotl(B, 2) ^ rotl(B, 10) ^ rotl(B, 18) ^ rotl(B, 24);
+}
+
+//å¯†é’¥æ‰©å±•çš„åˆæˆå˜æ¢
+uint32_t T_prime(uint32_t A) {
     uint8_t a[4] = {
         static_cast<uint8_t>(A >> 24),
         static_cast<uint8_t>(A >> 16),
@@ -42,21 +70,32 @@ uint32_t T(uint32_t A) {
     for (int i = 0; i < 4; ++i)
         a[i] = SM4_SBOX[a[i]];
     uint32_t B = (a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3];
-    return L(B);
+    return B ^ rotl(B, 13) ^ rotl(B, 23);
 }
 
-// »ù±¾¼ÓÃÜ£¬²»º¬Key Schedule
-void sm4_encrypt(uint32_t block[4], const uint32_t rk[32]) {
+// å¯†é’¥æ‰©å±•
+void key_schedule(const uint32_t key[4], uint32_t rk[32]) {
+    uint32_t K[36];
+    for (int i = 0; i < 4; ++i)
+        K[i] = key[i] ^ FK[i];
+    for (int i = 0; i < 32; ++i)
+        K[i + 4] = K[i] ^ T_prime(K[i + 1] ^ K[i + 2] ^ K[i + 3] ^ CK[i]);
+    memcpy(rk, &K[4], 32 * sizeof(uint32_t));
+}
+
+// é€šç”¨åŠ /è§£å¯†ï¼ˆenc=true ä¸ºåŠ å¯†ï¼‰
+void sm4_crypt(uint32_t block[4], const uint32_t rk[32], bool enc = true) {
     uint32_t X[36];
     memcpy(X, block, 4 * sizeof(uint32_t));
     for (int i = 0; i < 32; ++i) {
-        X[i + 4] = X[i] ^ T(X[i + 1] ^ X[i + 2] ^ X[i + 3] ^ rk[i]);
+        int r = enc ? i : 31 - i;
+        X[i + 4] = X[i] ^ T(X[i + 1] ^ X[i + 2] ^ X[i + 3] ^ rk[r]);
     }
     for (int i = 0; i < 4; ++i)
         block[i] = X[35 - i];
 }
 
-// Ëæ»úÉú³É128Î»Êı¾İ£¨Ã÷ÎÄ»òÃÜÔ¿£©
+// éšæœºç”Ÿæˆæ˜æ–‡ã€å¯†é’¥
 void random_block(uint32_t block[4]) {
     random_device rd;
     mt19937 gen(rd());
@@ -65,7 +104,7 @@ void random_block(uint32_t block[4]) {
         block[i] = dis(gen);
 }
 
-// Êä³ö¿é
+//è¾“å‡º
 void print_block(const string& label, const uint32_t block[4]) {
     cout << label << ": ";
     for (int i = 0; i < 4; ++i)
@@ -73,33 +112,42 @@ void print_block(const string& label, const uint32_t block[4]) {
     cout << dec << endl;
 }
 
-void test_sm4_once() {
-    uint32_t plaintext[4], key[32], ciphertext[4];
+//åŠ è§£å¯†æ­£ç¡®æ€§æ£€æµ‹
+bool test_sm4_once() {
+    uint32_t plaintext[4], key[4], rk[32], ciphertext[4], decrypted[4];
 
     random_block(plaintext);
     random_block(key);
-    for (int i = 0; i < 32; ++i)
-        key[i] = key[i % 4];  // ¼òµ¥Ìî³äÂÖÃÜÔ¿
+
+    key_schedule(key, rk);
 
     memcpy(ciphertext, plaintext, sizeof(ciphertext));
-    sm4_encrypt(ciphertext, key);
+    sm4_crypt(ciphertext, rk, true);
+
+    memcpy(decrypted, ciphertext, sizeof(decrypted));
+    sm4_crypt(decrypted, rk, false);
 
     print_block("Plaintext ", plaintext);
     print_block("Key       ", key);
     print_block("Ciphertext", ciphertext);
+    print_block("Decrypted ", decrypted);
+
+    return memcmp(plaintext, decrypted, sizeof(plaintext)) == 0;
 }
 
+//æ•ˆç‡æµ‹è¯•
 void test_performance() {
     const int N = 1000000;
     uint32_t data[4] = { 0x01234567, 0x89abcdef, 0xfedcba98, 0x76543210 };
+    uint32_t key[4] = { 0x00112233, 0x44556677, 0x8899aabb, 0xccddeeff };
     uint32_t rk[32];
-    for (int i = 0; i < 32; ++i) rk[i] = i;
+    key_schedule(key, rk);
 
     auto start = chrono::high_resolution_clock::now();
     for (int i = 0; i < N; ++i) {
         uint32_t tmp[4];
         memcpy(tmp, data, sizeof(tmp));
-        sm4_encrypt(tmp, rk);
+        sm4_crypt(tmp, rk, true);
     }
     auto end = chrono::high_resolution_clock::now();
     chrono::duration<double> diff = end - start;
@@ -110,8 +158,10 @@ void test_performance() {
 }
 
 int main() {
-    cout << "[SM4 Basic Test]\n";
-    test_sm4_once();
+    cout << "[SM4 Correctness Test]\n";
+    bool ok = test_sm4_once();
+    cout << (ok ? "Encryption & decryption match.\n" : " Decryption failed.\n");
+
     test_performance();
     return 0;
 }
